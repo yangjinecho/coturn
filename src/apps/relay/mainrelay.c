@@ -100,7 +100,7 @@ DH_1066, "", "", "",
 0,
 #endif
 
-TURN_VERBOSE_NONE,0,0,
+TURN_VERBOSE_NONE,0,0,0,
 "/var/run/turnserver.pid",
 DEFAULT_STUN_PORT,DEFAULT_STUN_TLS_PORT,0,0,1,
 0,0,0,0,
@@ -124,7 +124,24 @@ LOW_DEFAULT_PORTS_BOUNDARY,HIGH_DEFAULT_PORTS_BOUNDARY,0,0,0,"",
 /////////////// stop server ////////////////
 0,
 /////////////// MISC PARAMS ////////////////
-0,0,0,0,0,':',0,0,TURN_CREDENTIALS_NONE,0,0,0,0,0,0,
+0, /* stun_only */
+0, /* no_stun */
+0, /* secure_stun */
+0, /* server_relay */
+0, /* fingerprint */
+':', /* rest_api_separator */
+STUN_DEFAULT_NONCE_EXPIRATION_TIME, /* stale_nonce */
+STUN_DEFAULT_MAX_ALLOCATE_LIFETIME, /* max_allocate_lifetime */
+STUN_DEFAULT_CHANNEL_LIFETIME, /* channel_lifetime */
+STUN_DEFAULT_PERMISSION_LIFETIME, /* permission_lifetime */
+0, /* mobility */
+TURN_CREDENTIALS_NONE, /* ct */
+0, /* use_auth_secret_with_timestamp */
+0, /* max_bps */
+0, /* bps_capacity */
+0, /* bps_capacity_allocated */
+0, /* total_quota */
+0, /* user_quota */
 ///////////// Users DB //////////////
 { (TURN_USERDB_TYPE)0, {"\0"}, {0,NULL, {NULL,0}} },
 ///////////// CPUs //////////////////
@@ -418,6 +435,7 @@ static char Usage[] = "Usage: turnserver [options]\n"
 " -v, --verbose					'Moderate' verbose mode.\n"
 " -V, --Verbose					Extra verbose mode, very annoying (for debug purposes only).\n"
 " -o, --daemon					Start process as daemon (detach from current shell).\n"
+" --prod       	 				Production mode: hide the software version.\n"
 " -f, --fingerprint				Use fingerprints in the TURN messages.\n"
 " -a, --lt-cred-mech				Use the long-term credential mechanism.\n"
 " -z, --no-auth					Do not use any credential mechanism, allow anonymous access.\n"
@@ -547,7 +565,12 @@ static char Usage[] = "Usage: turnserver [options]\n"
 " --simple-log					This flag means that no log file rollover will be used, and the log file\n"
 "						name will be constructed as-is, without PID and date appendage.\n"
 "						This option can be used, for example, together with the logrotate tool.\n"
-" --stale-nonce					Use extra security with nonce value having limited lifetime (600 secs).\n"
+" --stale-nonce[=<value>]			Use extra security with nonce value having limited lifetime (default 600 secs).\n"
+" --max-allocate-lifetime	<value>		Set the maximum value for the allocation lifetime. Default to 3600 secs.\n"
+" --channel-lifetime		<value>		Set the lifetime for channel binding, default to 600 secs.\n"
+"						This value MUST not be changed for production purposes.\n"
+" --permission-lifetime		<value>		Set the value for the lifetime of the permission. Default to 300 secs.\n"
+"						This MUST not be changed for production purposes.\n"
 " -S, --stun-only				Option to set standalone STUN operation only, all TURN requests will be ignored.\n"
 "     --no-stun					Option to suppress STUN functionality, only TURN requests will be processed.\n"
 " --alternate-server		<ip:port>	Set the TURN server to redirect the allocate requests (UDP and TCP services).\n"
@@ -670,6 +693,9 @@ enum EXTRA_OPTS {
 	MIN_PORT_OPT,
 	MAX_PORT_OPT,
 	STALE_NONCE_OPT,
+	MAX_ALLOCATE_LIFETIME_OPT,
+	CHANNEL_LIFETIME_OPT,
+	PERMISSION_LIFETIME_OPT,
 	AUTH_SECRET_OPT,
 	DEL_ALL_AUTH_SECRETS_OPT,
 	STATIC_AUTH_SECRET_VAL_OPT,
@@ -715,7 +741,8 @@ enum EXTRA_OPTS {
 	ADMIN_TOTAL_QUOTA_OPT,
 	ADMIN_USER_QUOTA_OPT,
 	SERVER_NAME_OPT,
-	OAUTH_OPT
+	OAUTH_OPT,
+	PROD_OPT
 };
 
 struct myoption {
@@ -778,6 +805,7 @@ static const struct myoption long_options[] = {
 				{ "verbose", optional_argument, NULL, 'v' },
 				{ "Verbose", optional_argument, NULL, 'V' },
 				{ "daemon", optional_argument, NULL, 'o' },
+				{ "prod", optional_argument, NULL, PROD_OPT },
 				{ "fingerprint", optional_argument, NULL, 'f' },
 				{ "check-origin-consistency", optional_argument, NULL, CHECK_ORIGIN_CONSISTENCY_OPT },
 				{ "no-udp", optional_argument, NULL, NO_UDP_OPT },
@@ -787,6 +815,9 @@ static const struct myoption long_options[] = {
 				{ "no-udp-relay", optional_argument, NULL, NO_UDP_RELAY_OPT },
 				{ "no-tcp-relay", optional_argument, NULL, NO_TCP_RELAY_OPT },
 				{ "stale-nonce", optional_argument, NULL, STALE_NONCE_OPT },
+				{ "max-allocate-lifetime", optional_argument, NULL, MAX_ALLOCATE_LIFETIME_OPT },
+				{ "channel-lifetime", optional_argument, NULL, CHANNEL_LIFETIME_OPT },
+				{ "permission-lifetime", optional_argument, NULL, PERMISSION_LIFETIME_OPT },
 				{ "stun-only", optional_argument, NULL, 'S' },
 				{ "no-stun", optional_argument, NULL, NO_STUN_OPT },
 				{ "cert", required_argument, NULL, CERT_FILE_OPT },
@@ -877,6 +908,13 @@ static const struct myoption admin_long_options[] = {
 				{ "help", no_argument, NULL, 'h' },
 				{ NULL, no_argument, NULL, 0 }
 };
+
+static int get_int_value(const char* s, int default_value)
+{
+	if (!s || !(s[0]))
+		return default_value;
+	return atoi(s);
+}
 
 static int get_bool_value(const char* s)
 {
@@ -1039,7 +1077,16 @@ static void set_option(int c, char *value)
 		turn_params.no_loopback_peers = get_bool_value(value);
 		break;
 	case STALE_NONCE_OPT:
-		turn_params.stale_nonce = get_bool_value(value);
+		turn_params.stale_nonce = get_int_value(value, STUN_DEFAULT_NONCE_EXPIRATION_TIME);
+		break;
+	case MAX_ALLOCATE_LIFETIME_OPT:
+		turn_params.max_allocate_lifetime = get_int_value(value, STUN_DEFAULT_MAX_ALLOCATE_LIFETIME);
+		break;
+	case CHANNEL_LIFETIME_OPT:
+		turn_params.channel_lifetime = get_int_value(value, STUN_DEFAULT_CHANNEL_LIFETIME);
+		break;
+	case PERMISSION_LIFETIME_OPT:
+		turn_params.permission_lifetime = get_int_value(value, STUN_DEFAULT_PERMISSION_LIFETIME);
 		break;
 	case MAX_ALLOCATE_TIMEOUT_OPT:
 		TURN_MAX_ALLOCATE_TIMEOUT = atoi(value);
@@ -1122,6 +1169,9 @@ static void set_option(int c, char *value)
 			turn_params.ct = TURN_CREDENTIALS_NONE;
 			anon_credentials = 1;
 		}
+		break;
+	case PROD_OPT:
+		turn_params.prod = get_bool_value(value);
 		break;
 	case 'f':
 		turn_params.fingerprint = get_bool_value(value);
@@ -2406,7 +2456,7 @@ static int ServerALPNCallback(SSL *ssl,
 		}
 		if((current_len == ha_len) && (memcmp(ptr+1,HTTP_ALPN,ha_len)==0)) {
 			*out = ptr+1;
-			*outlen = ta_len;
+			*outlen = ha_len;
 			SSL_set_app_data(ssl,HTTP_ALPN);
 			found_http = 1;
 		}

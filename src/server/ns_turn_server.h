@@ -115,8 +115,12 @@ struct _turn_turnserver {
 	int rfc5780;
 	vintp check_origin;
 	vintp stale_nonce;
+        vintp max_allocate_lifetime;
+        vintp channel_lifetime;
+        vintp permission_lifetime;
 	vintp stun_only;
 	vintp no_stun;
+	vintp prod;
 	vintp secure_stun;
 	turn_credential_type ct;
 	get_alt_addr_cb alt_addr_cb;
@@ -167,6 +171,8 @@ struct _turn_turnserver {
 	const char* oauth_server_name;
 };
 
+const char * get_version(turn_turnserver *server);
+
 ///////////////////////////////////////////
 
 void init_turn_server(turn_turnserver* server,
@@ -184,8 +190,12 @@ void init_turn_server(turn_turnserver* server,
 				    vintp no_tcp_relay,
 				    vintp no_udp_relay,
 				    vintp stale_nonce,
+                                    vintp max_allocate_lifetime,
+                                    vintp channel_lifetime,
+                                    vintp permission_lifetime,
 				    vintp stun_only,
 				    vintp no_stun,
+				    vintp prod,
 				    turn_server_addrs_list_t *alternate_servers_list,
 				    turn_server_addrs_list_t *tls_alternate_servers_list,
 				    turn_server_addrs_list_t *aux_servers_list,
