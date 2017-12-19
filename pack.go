@@ -101,11 +101,11 @@ func main() {
 		return
 	}
 
-	err = pack("coturn.tar.bz2")
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+	// err = pack("coturn.tar.bz2")
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	return
+	// }
 }
 
 // LD_LIBRARY_PATH=lib lib/ld-linux.so bin/turnserver -b turndb/turndb
